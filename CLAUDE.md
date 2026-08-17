@@ -19,9 +19,40 @@ a testar é essa — objeto de grupo sem a propriedade, precisa descer para a su
 
 ## Bugs confirmados
 
-### 1. `ProfileView.Create` — parâmetros fora de ordem
-Ver histórico de debugging anterior (`ProfileEditCommands.cs`). Retorno nulo ao criar
-Profile View por parâmetros passados na ordem incorreta na chamada da API.
+### 1. `ProfileView.Create` — parâmetros fora de ordem (CONFIRMADO via decompilação)
+
+**Sintoma:** `civil3d_profile view_create` sempre falha com "ProfileView.Create returned
+null — this Civil 3D version may require a different API signature."
+
+**Causa raiz confirmada via ILSpy:** `ProfileEditCommands.cs` chama
+`ProfileView.Create` via reflection com `profileViewName` como **primeiro** parâmetro,
+em 3 tentativas encadeadas com `??`. Na API real (`Autodesk.Civil.DatabaseServices.
+ProfileView`), o primeiro parâmetro é sempre `alignmentId`, seguido de `insertPosition`
+— o nome só entra como terceiro parâmetro. Além disso, no overload completo a ordem
+correta é `(alignmentId, insertPosition, profileViewName, bandSetId, styleId)` — band
+set antes de style, invertido em relação ao código original.
+
+Como a chamada é via reflection, nenhuma das 3 tentativas gera exceção — só retorna
+`null` silenciosamente, mascarando a causa real atrás de uma mensagem genérica de
+"incompatibilidade de versão".
+
+**Correção:**
+```csharp
+var pvId = (ObjectId?)(
+  CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
+    alignment.ObjectId, insertionPoint, profileViewName, bandSetId, styleId)
+  ?? CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
+    alignment.ObjectId, insertionPoint));
+```
+
+**Arquivo:** `Civil3D-MCP-Plugin\ProfileEditCommands.cs`, método
+`ProfileViewCreateAsync` (~linha 220–270).
+
+**Nota técnica completa:** `docs/issues/profileview-create-params.md`
+
+**Pendente:** varrer o resto do repo (`Alignment`, `Corridor`, `PipeNetwork`, `Parcel`)
+atrás do mesmo padrão — `InvokeStaticMethod` + `??` com ordem de parâmetros não
+confirmada contra a assinatura real via ILSpy.
 
 ### 2. `AlignmentSCS.Radius` / spiral `.A` retornam 0 (CONFIRMADO via decompilação)
 
@@ -58,6 +89,8 @@ if (entity.EntityType == AlignmentEntityType.SpiralCurveSpiral)
 }
 ```
 
+**Nota técnica completa:** `docs/issues/alignment-scs-radius.md`
+
 **Arquivo provável do bug:** `AlignmentCommands.cs` (mesmo módulo/estilo de
 `ProfileEditCommands.cs`). Procurar por `GetProperty("Radius")` ou qualquer
 `try/catch` genérico ao redor da leitura de entidades de alinhamento.
@@ -70,6 +103,39 @@ if (entity.EntityType == AlignmentEntityType.SpiralCurveSpiral)
 - Rodar diagnóstico `DUMPALIGNSCS` (comando de reflection completa, mesmo padrão do
   `DUMPPVCREATE` usado no bug do `ProfileView.Create`) para confirmar em runtime que
   `Arc.Radius` retorna os valores esperados antes de aplicar o patch em produção.
+
+## Status geral (fim da sessão de 17/08/2026)
+
+| Bug | Status | Branch |
+|---|---|---|
+| `ProfileView.Create` — ordem de parâmetros | ✅ Corrigido, buildado, commitado e enviado (push feito) | `fix/profileview-create-params` |
+| `AlignmentSCS.Radius`/`.A` retornam 0 | 🔎 Causa raiz confirmada por decompilação; **patch ainda não aplicado** | (a criar) |
+| `Parcel.Create` — método não existe | 📄 Documentado; **não é patch pontual**, exige reescrever a abordagem (comando de editor em vez de API gerenciada) | mover para `fix/parcel-create-not-found` (commit estava na branch errada) |
+| `Alignment.CreateOffsetAlignment` | 🕵️ Candidato levantado na varredura, **ainda não decompilado** | — |
+
+## Próximo passo sugerido (início da próxima sessão)
+
+1. Confirmar que o commit do Parcel foi movido para a branch correta (ver instrução
+   passada ao Claude Code no fim da sessão anterior).
+2. Aplicar o patch já confirmado do `AlignmentSCS.Radius`/`.A` (ver seção acima —
+   causa raiz já está 100% confirmada, só falta escrever o patch em
+   `AlignmentCommands.cs` e testar, mesmo fluxo usado no `ProfileView.Create`).
+3. Decompilar `Autodesk.Civil.DatabaseServices.Alignment.CreateOffsetAlignment`
+   (candidato encontrado em `Civil3D-MCP-Plugin/AlignmentEditCommands.cs:186-195`)
+   via ILSpy antes de decidir se é bug de ordem (como ProfileView) ou de abordagem
+   inválida (como Parcel).
+4. Considerar abrir PR do `fix/profileview-create-params` para `upstream/main` —
+   já está pronto, testado (build limpo) e isolado.
+
+## Lição operacional desta sessão
+
+Ao pedir para o Claude Code reproduzir/mostrar conteúdo longo (docs, diffs) via
+mensagens de chat em vez de leitura direta de arquivo, ele erra silenciosamente em
+pontos aleatórios (bloco de código sem fechamento, célula de tabela corrompida) —
+mesmo quando garante que o conteúdo está correto. **Sempre verificar com comando
+objetivo pós-gravação** (`Get-Content -Raw` + `.Contains(...)` de um trecho
+específico, contagem de crases triplas) em vez de confiar em preview visual no
+terminal ou na palavra do agente. Isso já pegou dois casos reais nesta sessão.
 
 ## Ambiente de dev
 - Node.js + .NET 10 (houve mismatch net8.0→net10.0 no `.csproj`, já resolvido)
