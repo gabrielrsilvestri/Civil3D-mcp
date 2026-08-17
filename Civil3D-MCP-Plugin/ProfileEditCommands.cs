@@ -244,16 +244,14 @@ public static class ProfileEditCommands
       var bandSetId = LookupUtils.GetProfileViewBandSetId(
         civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "bandSet"));
 
-      // ProfileView.Create(profileViewName, alignmentId, styleId, insertionPoint)
-      // or ProfileView.Create(profileViewName, alignmentId, insertionPoint, styleId, bandSetId)
+      // ProfileView.Create(alignmentId, insertPosition, profileViewName, bandSetId, styleId)
+      // Confirmed via ILSpy decompilation of AeccDbMgd.dll — see docs/issues/profileview-create-params.md
       var profileViewType = typeof(ProfileView);
       var pvId = (ObjectId?)(
         CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, insertionPoint, styleId, bandSetId)
+          alignment.ObjectId, insertionPoint, profileViewName, bandSetId, styleId)
         ?? CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, styleId, insertionPoint)
-        ?? CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, insertionPoint));
+          alignment.ObjectId, insertionPoint));
 
       if (pvId == null || pvId.Value.IsNull)
       {
